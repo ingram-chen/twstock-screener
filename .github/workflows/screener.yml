@@ -1,0 +1,48 @@
+name: 選股看板
+
+on:
+  schedule:
+    # 09:30 UTC = 台北 17:30，週一到週五。證交所約 15:00 出行情、16:00 出法人，
+    # 收盤後跑才是當天的盤（screener.py 自己也會檢查交易日是否過舊並在 log 裡喊）。
+    - cron: "30 9 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screener
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - run: python3 screener.py
+
+      # Pages（分支部署模式）直接讀 repo 根目錄的 index.html，看板每次跑完就地更新。
+      - run: cp dashboard.html index.html
+
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 這個 glob 要跟 .gitignore 的 !cache/tdcc_[0-9]*.csv 完全對上 ——
+          # 用 tdcc_*.csv 會連被忽略的 tdcc_latest.csv 一起選到，git add 對被忽略檔案
+          # 會直接報錯中止（set -e 生效），根本到不了下面的 commit 判斷。
+          git add dashboard.html index.html picks.csv cache/tdcc_[0-9]*.csv
+          # git diff --cached --quiet 在有差異時回傳非 0 —— run: 預設 bash -e，
+          # 用 && 串接會被當成整行失敗直接中止整個 step，撈不到後面的 commit/push。
+          if git diff --cached --quiet; then
+            echo "無變化，略過提交"
+          else
+            git commit -m "選股 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M') 台北時間"
+            git push
+          fi
