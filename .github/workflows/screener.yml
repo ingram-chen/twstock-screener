@@ -42,7 +42,21 @@ jobs:
           # 用 && 串接會被當成整行失敗直接中止整個 step，撈不到後面的 commit/push。
           if git diff --cached --quiet; then
             echo "無變化，略過提交"
-          else
-            git commit -m "選股 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M') 台北時間"
-            git push
+            exit 0
           fi
+          git commit -m "選股 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M') 台北時間"
+
+          # 同一個 run 被連續按 Re-run（或手動觸發跟排程前後腳撞在一起）時，
+          # concurrency group 不保證擋得住 —— 後推的那個會因為遠端已經領先而被拒絕
+          # （rejected: fetch first）。用「fetch + rebase 後重試」自己修，不必人工介入；
+          # 用 -X theirs 讓「這次剛產生的內容」贏，因為它是三方裡最新抓到的資料。
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "push 被拒絕，第 $attempt 次重試：fetch + rebase"
+            git fetch origin main
+            git rebase origin/main -X theirs
+          done
+          echo "重試 3 次仍推不上去，放棄"
+          exit 1
